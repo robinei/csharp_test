@@ -1,0 +1,14 @@
+.DS_Store
+*.suo
+*.csproj.user
+*.userprefs
+
+bin/
+Bin/
+obj/
+Obj/
+
+/packages/*
+!/packages/repositories.config
+
+
