@@ -1,20 +1,21 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Linq;
 
 namespace Test
 {
-    public delegate void MessageHandler<T>(T message, object sender);
+    public delegate void MessageHandler<in T>(T message, object key);
 
 
     public struct MessageListener<T>
     {
-        public readonly int ID;
         public readonly MessageHandler<T> Handler;
+        public readonly int? KeyHashCode;
 
-        internal MessageListener(int id, MessageHandler<T> handler)
+        internal MessageListener(MessageHandler<T> handler, int? keyHashCode)
         {
-            ID = id;
             Handler = handler;
+            KeyHashCode = keyHashCode;
         }
     }
 
@@ -23,21 +24,24 @@ namespace Test
     {
         private struct HandlerEntry
         {
-            public readonly int ID;
             public readonly WeakReference Handler;
-            public readonly WeakReference RequireSender; // if non-null, only accept messages from this sender
+            public readonly WeakReference WeakKey;
+            public readonly object StrongKey;
 
-            public HandlerEntry(int id, object handler, object requireSender)
+            public HandlerEntry(WeakReference handler, WeakReference weakKey, object strongKey)
             {
-                ID = id;
-                Handler = new WeakReference(handler);
-                RequireSender = requireSender == null ? null : new WeakReference(requireSender);
+                Handler = handler;
+                WeakKey = weakKey;
+                StrongKey = strongKey;
             }
         }
 
-        private int idCounter = 0;
-        private readonly Dictionary<Type, List<HandlerEntry>> registry = new Dictionary<Type, List<HandlerEntry>>();
+        // stores handlers for messages which aren't broadcasted with a target key
+        private readonly Dictionary<Type, List<HandlerEntry>> untargeted = new Dictionary<Type, List<HandlerEntry>>();
 
+        // add an additional layer of indirection with a map from key hash code to entry list, so we don't have to
+        // iterate through too many entries when sending targeted messages (only the entries with the right hash code)
+        private readonly Dictionary<Type, Dictionary<int, List<HandlerEntry>>> targeted = new Dictionary<Type, Dictionary<int, List<HandlerEntry>>>();
 
         public static readonly MessageBus Default = new MessageBus();
 
@@ -46,31 +50,64 @@ namespace Test
         {
             get
             {
-                int count = 0;
-                foreach (var entries in registry.Values)
-                    count += entries.Count;
-                return count;
+                return untargeted.Values.Sum(entries => entries.Count) +
+                    targeted.Values.SelectMany(entryLists => entryLists.Values).Sum(entries => entries.Count);
             }
         }
 
 
+        public void AddListener<T>(out MessageListener<T> listener, MessageHandler<T> handler)
+        {
+            AddListener(out listener, handler, null, false);
+        }
+
+        public void AddListenerWithStrongKey<T>(object key, out MessageListener<T> listener, MessageHandler<T> handler)
+        {
+            AddListener(out listener, handler, key, false);
+        }
+
+        public void AddListenerWithWeakKey<T>(object key, out MessageListener<T> listener, MessageHandler<T> handler)
+        {
+            AddListener(out listener, handler, key, true);
+        }
+
         // if the listener object is reclaimed you may stop receiving messages because
-        // the handler may then also be GCed, so keep it alive
-        public void AddListener<T>(out MessageListener<T> listener, MessageHandler<T> handler, object requireSender = null)
+        // the handler may then also be GCed, so the caller is responsible for keeping it alive
+        private void AddListener<T>(out MessageListener<T> listener, MessageHandler<T> handler, object key, bool keyIsWeak)
         {
             if (handler == null)
-                throw new ArgumentNullException("handler was null");
-
-            var entry = new HandlerEntry(++idCounter, handler, requireSender);
+                throw new ArgumentNullException("handler");
 
             List<HandlerEntry> entries;
-            if (!registry.TryGetValue(typeof(T), out entries)) {
-                entries = new List<HandlerEntry>();
-                registry.Add(typeof(T), entries);
-            }
-            entries.Add(entry);
+            int? keyHash = null;
+            WeakReference weakKey = null;
 
-            listener = new MessageListener<T>(entry.ID, handler);
+            if (key == null) {
+                if (!untargeted.TryGetValue(typeof(T), out entries)) {
+                    entries = new List<HandlerEntry>();
+                    untargeted.Add(typeof(T), entries);
+                }
+            } else {
+                Dictionary<int, List<HandlerEntry>> entryLists;
+                if (!targeted.TryGetValue(typeof(T), out entryLists)) {
+                    entryLists = new Dictionary<int, List<HandlerEntry>>();
+                    targeted.Add(typeof(T), entryLists);
+                }
+
+                keyHash = key.GetHashCode();
+                if (!entryLists.TryGetValue(keyHash.Value, out entries)) {
+                    entries = new List<HandlerEntry>();
+                    entryLists.Add(keyHash.Value, entries);
+                }
+
+                if (keyIsWeak) {
+                    weakKey = new WeakReference(key);
+                    key = null;
+                }
+            }
+
+            entries.Add(new HandlerEntry(new WeakReference(handler), weakKey, key));
+            listener = new MessageListener<T>(handler, keyHash);
         }
 
 
@@ -78,55 +115,66 @@ namespace Test
         // because waiting for the GC to reclaim your handler is highly undeterministic
         public bool RemoveListener<T>(ref MessageListener<T> listener)
         {
-            if (listener.ID != 0 && listener.Handler == null)
-                throw new ArgumentException("Trying to remove bad MessageListener!"); // should not happen
-            if (listener.ID == 0)
-                return false; // it has already been removed, or it hasn't been added (this is not an error)
-
             List<HandlerEntry> entries;
-            if (!registry.TryGetValue(typeof(T), out entries))
-                return false;
+            if (!listener.KeyHashCode.HasValue) {
+                if (!untargeted.TryGetValue(typeof(T), out entries))
+                    return false;
+            } else {
+                Dictionary<int, List<HandlerEntry>> entryLists;
+                if (!targeted.TryGetValue(typeof(T), out entryLists))
+                    return false;
+                if (!entryLists.TryGetValue(listener.KeyHashCode.Value, out entries))
+                    return false;
+            }
 
             for (int i = 0; i < entries.Count; ++i) {
                 var entry = entries[i];
 
-                if (listener.ID != entry.ID)
-                    continue;
-
                 object handler = entry.Handler.Target;
-                if (handler == null)
-                    throw new ArgumentException("ID matched while Handler has been GCed. " +
-                        "Did you try to remove a MessageListener that was added to a different MessageBus?");
+                if (handler == null) {
+                    entries.RemoveAt(i--);
+                    continue;
+                }
 
-                if (handler != (object)listener.Handler)
-                    throw new ArgumentException("ID matched while Handler did not. " +
-                        "Did you try to remove a MessageListener that was added to a different MessageBus?");
-
-                entries.RemoveAt(i);
-                listener = new MessageListener<T>(0, null);
-                return true;
+                if (handler.Equals(listener.Handler)) {
+                    entries.RemoveAt(i);
+                    listener = new MessageListener<T>(null, null);
+                    return true;
+                }
             }
 
             return false;
         }
 
 
-        public void Broadcast<T>(T message, object sender = null)
+        public void Broadcast<T>(T message, object key = null)
         {
             List<HandlerEntry> entries;
-            if (!registry.TryGetValue(typeof(T), out entries))
-                return;
+            if (key == null) {
+                if (!untargeted.TryGetValue(typeof(T), out entries))
+                    return;
+            } else {
+                int hash = key.GetHashCode();
+                Dictionary<int, List<HandlerEntry>> entryLists;
+                if (!targeted.TryGetValue(typeof(T), out entryLists))
+                    return;
+                if (!entryLists.TryGetValue(hash, out entries))
+                    return;
+            }
 
             for (int i = 0; i < entries.Count; ++i) {
                 var entry = entries[i];
 
-                if (entry.RequireSender != null) {
-                    object requireSender = entry.RequireSender.Target;
-                    if (requireSender == null) {
+                if (entry.StrongKey != null) {
+                    if (!entry.StrongKey.Equals(key))
+                        continue;
+                } else if (entry.WeakKey != null) {
+                    object requireKey = entry.WeakKey.Target;
+                    if (requireKey == null) {
                         entries.RemoveAt(i--);
                         continue;
                     }
-                    if (requireSender != sender)
+                    if (!requireKey.Equals(key))
                         continue;
                 }
 
@@ -136,28 +184,48 @@ namespace Test
                     continue;
                 }
 
-                ((MessageHandler<T>)handler)(message, sender);
+                ((MessageHandler<T>)handler)(message, key);
             }
         }
 
 
+        private readonly List<int> emptyHashCodes = new List<int>();
+
         public void RemoveDeadListeners()
         {
-            foreach (var entries in registry.Values) {
-                for (int i = 0; i < entries.Count; ++i) {
-                    var entry = entries[i];
-                    if (entry.RequireSender != null && !entry.RequireSender.IsAlive)
-                        entries.RemoveAt(i--);
-                    else if (!entry.Handler.IsAlive)
-                        entries.RemoveAt(i--);
+            foreach (var entries in untargeted.Values)
+                RemoveDeadEntries(entries);
+
+            foreach (var entryLists in targeted.Values) {
+                foreach (var item in entryLists) {
+                    RemoveDeadEntries(item.Value);
+                    if (item.Value.Count == 0)
+                        emptyHashCodes.Add(item.Key);
                 }
+                if (emptyHashCodes.Count != 0) {
+                    foreach (int code in emptyHashCodes)
+                        entryLists.Remove(code);
+                    emptyHashCodes.Clear();
+                }
+            }
+        }
+
+        private static void RemoveDeadEntries(List<HandlerEntry> entries)
+        {
+            for (int i = 0; i < entries.Count; ++i) {
+                var entry = entries[i];
+                if (entry.WeakKey != null && !entry.WeakKey.IsAlive)
+                    entries.RemoveAt(i--);
+                else if (!entry.Handler.IsAlive)
+                    entries.RemoveAt(i--);
             }
         }
 
 
         public void RemoveAllListeners()
         {
-            registry.Clear();
+            untargeted.Clear();
+            targeted.Clear();
         }
     }
 }

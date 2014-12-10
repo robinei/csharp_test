@@ -9,38 +9,27 @@ namespace Test
         public struct TestEvent { }
         public struct TestEvent2 { }
 
-        private int counter;
         private MessageListener<TestEvent> listener;
         private MessageListener<TestEvent2> listener2;
+        private int messageCounter;
+        private int deadCounter;
 
-        private void AddListener(object requireSender = null)
+        private string DeadKey { get { return "dead key " + deadCounter; } }
+
+        private MessageHandler<TestEvent> MakeHandler()
         {
-            MessageBus.Default.AddListener(out listener, (msg, sender) => {
-                ++counter;
-            }, requireSender);
+            return (msg, key) => {
+                ++messageCounter;
+            };
         }
 
-        private void AddListener2(object requireSender = null)
+        private MessageHandler<TestEvent2> MakeHandler2()
         {
-            MessageBus.Default.AddListener(out listener2, (msg, sender) => {
-                ++counter;
-            }, requireSender);
+            return (msg, key) => {
+                ++messageCounter;
+            };
         }
 
-        private void AddListenerWithUnrefedSender()
-        {
-            AddListener(new object());
-        }
-
-        private void ClearListener()
-        {
-            listener = new MessageListener<TestEvent>(0, null);
-        }
-
-        private void ClearListener2()
-        {
-            listener2 = new MessageListener<TestEvent2>(0, null);
-        }
 
         private void GarbageCollect()
         {
@@ -52,122 +41,123 @@ namespace Test
         [SetUp]
         public void Init()
         {
-            counter = 0;
-            ClearListener();
-            ClearListener2();
+            ++deadCounter;
+            messageCounter = 0;
+            listener = new MessageListener<TestEvent>(null, null);
+            listener2 = new MessageListener<TestEvent2>(null, null);
             MessageBus.Default.RemoveAllListeners();
         }
 
         [Test]
         public void TestRetainedListenerCalled()
         {
-            AddListener();
+            MessageBus.Default.AddListener(out listener, MakeHandler());
             GarbageCollect();
             MessageBus.Default.Broadcast(new TestEvent());
-            Assert.AreEqual(1, counter);
+            Assert.AreEqual(1, messageCounter);
             Assert.AreEqual(1, MessageBus.Default.ListenerCount);
         }
 
         [Test]
         public void TestRetainedListenersCalled()
         {
-            AddListener();
-            AddListener2();
+            MessageBus.Default.AddListener(out listener, MakeHandler());
+            MessageBus.Default.AddListener(out listener2, MakeHandler2());
             GarbageCollect();
             MessageBus.Default.Broadcast(new TestEvent());
             MessageBus.Default.Broadcast(new TestEvent2());
-            Assert.AreEqual(2, counter);
+            Assert.AreEqual(2, messageCounter);
             Assert.AreEqual(2, MessageBus.Default.ListenerCount);
         }
 
         [Test]
         public void TestGCedListenerNotCalled()
         {
-            AddListener();
-            ClearListener();
+            MessageBus.Default.AddListener(out listener, MakeHandler());
+            listener = new MessageListener<TestEvent>(null, null);
             GarbageCollect();
             MessageBus.Default.Broadcast(new TestEvent());
-            Assert.AreEqual(0, counter);
+            Assert.AreEqual(0, messageCounter);
             Assert.AreEqual(0, MessageBus.Default.ListenerCount);
         }
 
         [Test]
         public void TestRemovedListenerNotCalled()
         {
-            AddListener();
+            MessageBus.Default.AddListener(out listener, MakeHandler());
             bool removed = MessageBus.Default.RemoveListener(ref listener);
             Assert.IsTrue(removed);
             MessageBus.Default.Broadcast(new TestEvent());
-            Assert.AreEqual(0, counter);
+            Assert.AreEqual(0, messageCounter);
             Assert.AreEqual(0, MessageBus.Default.ListenerCount);
         }
 
         [Test]
         public void TestOneRemovedListenerNotCalled()
         {
-            AddListener();
-            AddListener2();
+            MessageBus.Default.AddListener(out listener, MakeHandler());
+            MessageBus.Default.AddListener(out listener2, MakeHandler2());
             bool removed = MessageBus.Default.RemoveListener(ref listener2);
             Assert.IsTrue(removed);
             MessageBus.Default.Broadcast(new TestEvent());
             MessageBus.Default.Broadcast(new TestEvent2());
-            Assert.AreEqual(1, counter);
+            Assert.AreEqual(1, messageCounter);
             Assert.AreEqual(1, MessageBus.Default.ListenerCount);
         }
 
         [Test]
         public void TestNothingCalledAfterRemoveAll()
         {
-            AddListener();
+            MessageBus.Default.AddListener(out listener, MakeHandler());
             MessageBus.Default.RemoveAllListeners();
             MessageBus.Default.Broadcast(new TestEvent());
-            Assert.AreEqual(0, counter);
+            Assert.AreEqual(0, messageCounter);
             Assert.AreEqual(0, MessageBus.Default.ListenerCount);
         }
 
         [Test]
         public void TestOtherListenerNotCalled()
         {
-            AddListener();
+            MessageBus.Default.AddListener(out listener, MakeHandler());
             MessageBus.Default.Broadcast(new TestEvent2());
-            Assert.AreEqual(0, counter);
+            Assert.AreEqual(0, messageCounter);
             Assert.AreEqual(1, MessageBus.Default.ListenerCount);
         }
 
         [Test]
-        public void TestCalledIfRightSender()
+        public void TestCalledIfRightKey()
         {
-            var sender = new object();
-            AddListener(sender);
-            MessageBus.Default.Broadcast(new TestEvent(), sender);
-            Assert.AreEqual(1, counter);
-            Assert.AreEqual(1, MessageBus.Default.ListenerCount);
-        }
-
-        [Test]
-        public void TestNotCalledIfWrongSender()
-        {
-            AddListener(new object());
-            MessageBus.Default.Broadcast(new TestEvent(), new object());
-            MessageBus.Default.Broadcast(new TestEvent(), null);
-            Assert.AreEqual(0, counter);
-            Assert.AreEqual(1, MessageBus.Default.ListenerCount);
-        }
-
-        [Test]
-        public void TestNotCalledIfSenderGCed()
-        {
-            AddListenerWithUnrefedSender();
+            MessageBus.Default.AddListenerWithStrongKey("key", out listener, MakeHandler());
             GarbageCollect();
+            MessageBus.Default.Broadcast(new TestEvent(), "key");
+            Assert.AreEqual(1, messageCounter);
+            Assert.AreEqual(1, MessageBus.Default.ListenerCount);
+        }
+
+        [Test]
+        public void TestNotCalledIfWrongKey()
+        {
+            MessageBus.Default.AddListenerWithStrongKey("foo", out listener, MakeHandler());
+            MessageBus.Default.Broadcast(new TestEvent(), "bar");
             MessageBus.Default.Broadcast(new TestEvent());
-            Assert.AreEqual(0, counter);
+            Assert.AreEqual(0, messageCounter);
+            Assert.AreEqual(1, MessageBus.Default.ListenerCount);
+        }
+
+        [Test]
+        public void TestNotCalledIfKeyGCed()
+        {
+            MessageBus.Default.AddListenerWithWeakKey(DeadKey, out listener, MakeHandler());
+            GarbageCollect();
+            MessageBus.Default.Broadcast(new TestEvent(), DeadKey);
+            Assert.AreEqual(0, messageCounter);
             Assert.AreEqual(0, MessageBus.Default.ListenerCount);
         }
 
         [Test]
-        public void TestRemoveDeadListenersWithDeadSender()
+        public void TestRemoveDeadListenersWithDeadKey()
         {
-            AddListenerWithUnrefedSender();
+            MessageBus.Default.AddListenerWithWeakKey(DeadKey, out listener, MakeHandler());
             GarbageCollect();
             MessageBus.Default.RemoveDeadListeners();
             Assert.AreEqual(0, MessageBus.Default.ListenerCount);
@@ -176,8 +166,8 @@ namespace Test
         [Test]
         public void TestRemoveDeadListenersWithDeadHandler()
         {
-            AddListener();
-            ClearListener();
+            MessageBus.Default.AddListener(out listener, MakeHandler());
+            listener = new MessageListener<TestEvent>(null, null);
             GarbageCollect();
             MessageBus.Default.RemoveDeadListeners();
             Assert.AreEqual(0, MessageBus.Default.ListenerCount);
@@ -186,7 +176,7 @@ namespace Test
         [Test]
         public void TestRemoveDeadListenersDoesntTouchAliveListener()
         {
-            AddListener();
+            MessageBus.Default.AddListener(out listener, MakeHandler());
             GarbageCollect();
             MessageBus.Default.RemoveDeadListeners();
             Assert.AreEqual(1, MessageBus.Default.ListenerCount);
