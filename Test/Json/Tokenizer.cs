@@ -146,9 +146,11 @@ namespace Test.Json
         }
 
         private State state = State.Start;
-        private readonly Stack<State> stateStack = new Stack<State>(10);
+        private int stateStackCount;
+        private State[] stateStack = new State[8];
 
-        private readonly List<RawToken> tokens = new List<RawToken>(32);
+        private int tokenCount;
+        private RawToken[] tokens = new RawToken[32];
 
         private char[] stringBuffer = new char[512];
         private int stringStart;
@@ -202,7 +204,7 @@ namespace Test.Json
         public bool IsFailed { get { return state == State.Error; } }
         public bool IsTokenizing { get { return !IsDone && !IsFailed; } }
 
-        public int Count { get { return tokens.Count; } }
+        public int Count { get { return tokenCount; } }
 
         public Token this[int i]
         {
@@ -227,7 +229,7 @@ namespace Test.Json
         // wipe the tokens that have been emitted since last Reset.
         // the string buffer will be overwritten after this, so any existing StringSlice
         // values from previously parsed tokens will no longer be safe to hang on to
-        public void Clear()
+        public void Reset()
         {
             if (stringPos == stringStart) {
                 stringStart = 0;
@@ -240,16 +242,16 @@ namespace Test.Json
                 stringStart = 0;
 
             }
-            tokens.Clear();
+            tokenCount = 0;
         }
 
-        public void Reset()
+        public void Clear()
         {
             state = State.Start;
-            stateStack.Clear();
+            stateStackCount = 0;
             stringStart = 0;
             stringPos = 0;
-            tokens.Clear();
+            tokenCount = 0;
             lastChar = default(char);
             charPos = 0;
         }
@@ -841,18 +843,24 @@ namespace Test.Json
 
         private void PushState(State s, State nextState)
         {
+            if (stateStackCount == stateStack.Length) {
+                Array.Resize(ref stateStack, stateStack.Length * 2);
+            }
             SetState(s);
-            stateStack.Push(nextState);
+            stateStack[stateStackCount++] = nextState;
         }
 
         private void PopState()
         {
-            SetState(stateStack.Pop());
+            SetState(stateStack[--stateStackCount]);
         }
 
         private void EmitToken(RawToken token)
         {
-            tokens.Add(token);
+            if (tokenCount == tokens.Length) {
+                Array.Resize(ref tokens, tokens.Length * 2);
+            }
+            tokens[tokenCount++] = token;
         }
 
         private void EmitStringChar(char ch)

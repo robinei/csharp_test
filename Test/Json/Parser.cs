@@ -255,7 +255,7 @@ namespace Test.Json
             }
         }
 
-        private void Indent(StringBuilder str, int depth)
+        private static void Indent(StringBuilder str, int depth)
         {
             for (int i = 0; i < depth; ++i)
                 str.Append("    ");
@@ -278,17 +278,37 @@ namespace Test.Json
         private struct Context
         {
             public State State;
-            public List<int> Indexes;
+            public int IndexCount;
+            public int[] Indexes;
+
+            public void AddIndex(int index)
+            {
+                if (IndexCount == Indexes.Length) {
+                    Array.Resize(ref Indexes, Indexes.Length * 2);
+                }
+                Indexes[IndexCount++] = index;
+            }
         }
+
 
         private int firstBorrowedString;
         private int borrowedStringsLength;
-        private readonly List<StringSlice> strings = new List<StringSlice>();
-        private readonly List<RawValue> values = new List<RawValue>();
-        private readonly List<int> indexes = new List<int>();
-        private readonly List<List<int>> tempIndexes = new List<List<int>>();
-        private readonly List<Context> contextStack = new List<Context>();
+
+        private int stringCount;
+        private StringSlice[] strings = new StringSlice[8];
+
+        private int valueCount;
+        private RawValue[] values = new RawValue[8];
+
+        private int indexCount;
+        private int[] indexes = new int[8];
+
+        private int tempIndexCount;
+        private int[][] tempIndexes = new int[8][];
+
         private Context context;
+        private int contextStackCount;
+        private Context[] contextStack = new Context[8];
 
 
         internal StringSlice _GetString(int i) { return strings[i]; }
@@ -302,9 +322,9 @@ namespace Test.Json
             {
                 if (context.State != State.Done)
                     throw new InvalidOperationException();
-                Debug.Assert(contextStack.Count == 0);
-                Debug.Assert(values.Count > 0);
-                return new Value(values[values.Count - 1], this);
+                Debug.Assert(contextStackCount == 0);
+                Debug.Assert(valueCount > 0);
+                return new Value(values[valueCount - 1], this);
             }
         }
         public bool IsDone { get { return context.State == State.Done; } }
@@ -320,19 +340,20 @@ namespace Test.Json
         {
             firstBorrowedString = 0;
             borrowedStringsLength = 0;
-            strings.Clear();
-            values.Clear();
-            indexes.Clear();
+            stringCount = 0;
+            valueCount = 0;
+            indexCount = 0;
             Reset();
         }
 
         public void Reset()
         {
-            foreach (var c in contextStack)
-                ReuseTempIndexList(c.Indexes);
-            contextStack.Clear();
-            context.State = State.Start;
-            context.Indexes.Clear();
+            ReuseTempIndexList(context.Indexes);
+            for (int i = 0; i < contextStackCount; ++i) {
+                ReuseTempIndexList(contextStack[i].Indexes);
+            }
+            context = MakeContext(State.Start);
+            contextStackCount = 0;
         }
 
         public bool Parse(IEnumerable<Token> tokens)
@@ -354,25 +375,29 @@ namespace Test.Json
                 break;
             case State.ArrayValue:
                 if (token.Type == TokenType.ArrayEnd) {
-                    values.Add(new RawValue { Type = ValueType.Array, ArrayOffset = indexes.Count, ArrayLength = context.Indexes.Count });
-                    foreach (int index in context.Indexes)
-                        indexes.Add(index);
+                    AddValue(new RawValue { Type = ValueType.Array, ArrayOffset = indexCount, ArrayLength = context.IndexCount });
+                    // ReSharper disable once ForCanBeConvertedToForeach
+                    for (int i = 0; i < context.IndexCount; ++i) {
+                        AddIndex(context.Indexes[i]);
+                    }
                     PopContext();
-                    context.Indexes.Add(values.Count - 1);
+                    context.AddIndex(valueCount - 1);
                 } else {
                     DispatchValueToken(token);
                 }
                 break;
             case State.ObjectKey:
                 if (token.Type == TokenType.ObjectEnd) {
-                    Debug.Assert((context.Indexes.Count % 2) == 0);
-                    values.Add(new RawValue { Type = ValueType.Object, ObjectOffset = indexes.Count, ObjectLength = context.Indexes.Count/2 });
-                    foreach (int index in context.Indexes)
-                        indexes.Add(index);
+                    Debug.Assert((context.IndexCount % 2) == 0);
+                    AddValue(new RawValue { Type = ValueType.Object, ObjectOffset = indexCount, ObjectLength = context.IndexCount / 2 });
+                    // ReSharper disable once ForCanBeConvertedToForeach
+                    for (int i = 0; i < context.IndexCount; ++i) {
+                        AddIndex(context.Indexes[i]);
+                    }
                     PopContext();
-                    context.Indexes.Add(values.Count - 1);
+                    context.AddIndex(valueCount - 1);
                 } else if (token.Type == TokenType.String) {
-                    context.Indexes.Add(strings.Count);
+                    context.AddIndex(stringCount);
                     AddString((StringSlice)token);
                     context.State = State.ObjectValue;
                 } else {
@@ -390,24 +415,24 @@ namespace Test.Json
         {
             switch (token.Type) {
             case TokenType.Null:
-                context.Indexes.Add(values.Count);
-                values.Add(new RawValue { Type = ValueType.Null });
+                context.AddIndex(valueCount);
+                AddValue(new RawValue { Type = ValueType.Null });
                 break;
             case TokenType.Bool:
-                context.Indexes.Add(values.Count);
-                values.Add(new RawValue { Type = ValueType.Bool, Bool = (bool)token });
+                context.AddIndex(valueCount);
+                AddValue(new RawValue { Type = ValueType.Bool, Bool = (bool)token });
                 break;
             case TokenType.Long:
-                context.Indexes.Add(values.Count);
-                values.Add(new RawValue { Type = ValueType.Long, Long = (long)token });
+                context.AddIndex(valueCount);
+                AddValue(new RawValue { Type = ValueType.Long, Long = (long)token });
                 break;
             case TokenType.Double:
-                context.Indexes.Add(values.Count);
-                values.Add(new RawValue { Type = ValueType.Double, Double = (double)token });
+                context.AddIndex(valueCount);
+                AddValue(new RawValue { Type = ValueType.Double, Double = (double)token });
                 break;
             case TokenType.String:
-                context.Indexes.Add(values.Count);
-                values.Add(new RawValue { Type = ValueType.String, StringIndex = strings.Count });
+                context.AddIndex(valueCount);
+                AddValue(new RawValue { Type = ValueType.String, StringIndex = stringCount });
                 AddString((StringSlice)token);
                 break;
             case TokenType.ArrayBegin:
@@ -428,7 +453,7 @@ namespace Test.Json
         {
             var buffer = new char[borrowedStringsLength];
             int offset = 0;
-            for (int i = firstBorrowedString; i < strings.Count; ++i) {
+            for (int i = firstBorrowedString; i < stringCount; ++i) {
                 var s = strings[i];
                 Buffer.BlockCopy(s.Buffer, s.StartIndex, buffer, offset, s.Length);
                 strings[i] = new StringSlice {
@@ -438,54 +463,71 @@ namespace Test.Json
                 };
                 offset += s.Length;
             }
-            firstBorrowedString = strings.Count;
+            firstBorrowedString = stringCount;
             borrowedStringsLength = 0;
         }
 
 
+        private void AddIndex(int index)
+        {
+            if (indexCount == indexes.Length) {
+                Array.Resize(ref indexes, indexes.Length * 2);
+            }
+            indexes[indexCount++] = index;
+        }
+
+        private void AddValue(RawValue value)
+        {
+            if (valueCount == values.Length) {
+                Array.Resize(ref values, values.Length * 2);
+            }
+            values[valueCount++] = value;
+        }
+
         private void AddString(StringSlice slice)
         {
+            if (stringCount == strings.Length) {
+                Array.Resize(ref strings, strings.Length * 2);
+            }
+            strings[stringCount++] = slice;
             borrowedStringsLength += slice.Length;
-            strings.Add(slice);
         }
 
         private void PushContext(State state)
         {
-            contextStack.Add(context);
+            if (contextStackCount == contextStack.Length) {
+                Array.Resize(ref contextStack, contextStack.Length * 2);
+            }
+            contextStack[contextStackCount++] = context;
             context = MakeContext(state);
         }
 
         private void PopContext()
         {
             ReuseTempIndexList(context.Indexes);
-            context = contextStack[contextStack.Count - 1];
-            contextStack.RemoveAt(contextStack.Count - 1);
+            context = contextStack[--contextStackCount];
         }
 
         private Context MakeContext(State state)
         {
             return new Context {
                 State = state,
+                IndexCount = 0,
                 Indexes = GetTempIndexList()
             };
         }
 
-        private List<int> GetTempIndexList()
+        private int[] GetTempIndexList()
         {
-            List<int> result;
-            if (tempIndexes.Count > 0) {
-                result = tempIndexes[tempIndexes.Count - 1];
-                tempIndexes.RemoveAt(tempIndexes.Count - 1);
-            } else {
-                result = new List<int>();
-            }
-            return result;
+            return tempIndexCount > 0 ? tempIndexes[--tempIndexCount] : new int[8];
         }
 
-        private void ReuseTempIndexList(List<int> list)
+        private void ReuseTempIndexList(int[] list)
         {
-            list.Clear();
-            tempIndexes.Add(list);
+            if (tempIndexCount == tempIndexes.Length) {
+                Array.Resize(ref tempIndexes, tempIndexes.Length * 2);
+            }
+            tempIndexes[tempIndexCount++] = list;
         }
     }
 }
