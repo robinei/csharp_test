@@ -157,7 +157,7 @@ namespace Test.Json
         private int tokenCount;
         private RawToken[] tokens = new RawToken[32];
 
-        private char[] stringBuffer = new char[512];
+        private char[] stringBuffer = new char[256];
         private int stringStart;
         private int stringPos;
         private int stringUniChar;
@@ -290,7 +290,6 @@ namespace Test.Json
                 Feed(str[i]);
             }
         }
-
 
         public void Feed(char ch)
         {
@@ -917,7 +916,7 @@ namespace Test.Json
 
         private static bool IsControl(char ch)
         {
-            return (ch >= 0 && ch <= 31) || ch == 127;
+            return ch >= 0 && ch <= 31;
         }
 
         private static int HexVal(char ch)

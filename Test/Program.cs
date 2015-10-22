@@ -11,7 +11,7 @@ namespace Test
     {
         public static void Main(string[] args)
         {
-            /*var jsonString = File.ReadAllText("sample.json");
+            var jsonString = File.ReadAllText("sample.json");
             Console.WriteLine("Read json data: " + jsonString.Length + " bytes");
 
             const int iterations = 50;
@@ -21,10 +21,7 @@ namespace Test
                 stopwatch.Start();
 
                 for (int i = 0; i < iterations; ++i) {
-                    var tokenizer = new Tokenizer();
-                    tokenizer.Tokenize(jsonString);
-                    var parser = new Parser();
-                    parser.Parse(tokenizer);
+                    var root = Parser.Parse(jsonString);
                 }
 
                 stopwatch.Stop();
@@ -41,7 +38,7 @@ namespace Test
 
                 stopwatch.Stop();
                 Console.WriteLine("JSON.Net time elapsed: {0}", stopwatch.Elapsed);
-            }*/
+            }
 
 
 
@@ -63,7 +60,7 @@ namespace Test
             }*/
 
 
-            var gen = new Generator(true);
+            /*var gen = new Generator(true);
 
             gen.Value(new Dictionary<string, int> {
                 {"foo", 123},
@@ -71,7 +68,7 @@ namespace Test
                 {"baz", 123}
             });
 
-            Console.WriteLine(gen.ToString());
+            Console.WriteLine(gen.ToString());*/
         }
     }
 }

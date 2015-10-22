@@ -6,6 +6,12 @@ using System.Runtime.InteropServices;
 
 namespace Test.Json
 {
+    public class ParserException : Exception
+    {
+        public ParserException(string msg) : base(msg) { }
+    }
+
+
     public enum ValueType
     {
         Null,
@@ -16,6 +22,7 @@ namespace Test.Json
         Array,
         Object
     }
+
 
     [StructLayout(LayoutKind.Explicit)]
     public struct RawValue
@@ -315,6 +322,19 @@ namespace Test.Json
                 Feed(token);
             }
             return IsDone;
+        }
+
+        public static Value Parse(string str)
+        {
+            var tokenizer = new Tokenizer();
+            if (!tokenizer.Tokenize(str)) {
+                throw new ParserException(tokenizer.ErrorString);
+            }
+            var parser = new Parser();
+            if (!parser.Parse(tokenizer)) {
+                throw new ParserException("parse error");
+            }
+            return parser.LastParsedRoot;
         }
 
         public void Feed(Token token)
