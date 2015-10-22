@@ -1,21 +1,39 @@
+using System;
+
 namespace Test.Json
 {
-    public struct StringSlice
+    public struct StringSlice : IEquatable<StringSlice>
     {
         public char[] Buffer;
         public int StartIndex;
         public int Length;
-        
-        public override bool Equals(object obj)
+
+        public bool Equals(StringSlice other)
         {
-            if (obj is StringSlice)
-                return this == (StringSlice)obj;
-            return obj is string && this == (string)obj;
+            return this == other;
+        }
+
+        public override bool Equals(object other)
+        {
+            if (other is StringSlice) {
+                return this == (StringSlice)other;
+            }
+            return other is string && this == (string)other;
         }
 
         public override int GetHashCode()
         {
             return ToString().GetHashCode();
+        }
+
+        public override string ToString()
+        {
+            return (string)this;
+        }
+
+        static public explicit operator string(StringSlice slice)
+        {
+            return new string(slice.Buffer, slice.StartIndex, slice.Length);
         }
         
         public static bool operator !=(StringSlice a, StringSlice b) { return !(a == b); }
@@ -33,26 +51,19 @@ namespace Test.Json
         public static bool operator !=(StringSlice slice, string str) { return !(slice == str); }
         public static bool operator ==(StringSlice slice, string str)
         {
-            if (str == null || slice.Length != str.Length)
+            if (str == null || slice.Length != str.Length) {
                 return false;
+            }
             // ReSharper disable once LoopCanBeConvertedToQuery
-            for (int i = 0; i < str.Length; ++i)
-                if (slice.Buffer[slice.StartIndex + i] != str[i])
+            for (int i = 0; i < str.Length; ++i) {
+                if (slice.Buffer[slice.StartIndex + i] != str[i]) {
                     return false;
+                }
+            }
             return true;
         }
 
         public static bool operator !=(string str, StringSlice slice) { return !(slice == str); }
         public static bool operator ==(string str, StringSlice slice) { return slice == str; }
-
-        static public explicit operator string(StringSlice slice)
-        {
-            return new string(slice.Buffer, slice.StartIndex, slice.Length);
-        }
-
-        public override string ToString()
-        {
-            return (string)this;
-        }
     }
 }

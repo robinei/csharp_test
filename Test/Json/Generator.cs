@@ -7,7 +7,7 @@ namespace Test.Json
 {
     public class GeneratorException : Exception
     {
-        
+        public GeneratorException(string msg) : base(msg) { }
     }
 
     public class Generator
@@ -87,7 +87,7 @@ namespace Test.Json
                     MaybeCommaIndent();
                 } else {
                     context.State = State.Error;
-                    throw new GeneratorException();
+                    throw new GeneratorException(String.Format("Got {0} while expecting ObjectEnd or String (ObjectKey)", tokenType));
                 }
                 break;
             case State.ObjectValue:
@@ -115,7 +115,7 @@ namespace Test.Json
                 break;
             default:
                 context.State = State.Error;
-                throw new GeneratorException();
+                throw new GeneratorException(String.Format("Got {0} while expecting value", tokenType));
             }
         }
 

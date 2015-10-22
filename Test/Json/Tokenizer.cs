@@ -57,36 +57,41 @@ namespace Test.Json
 
         static public explicit operator bool(Token token)
         {
-            if (token.Type != TokenType.Bool)
+            if (token.Type != TokenType.Bool) {
                 throw new InvalidCastException();
+            }
             return token.rawToken.Bool;
         }
 
         static public explicit operator long(Token token)
         {
-            if (token.Type != TokenType.Long)
+            if (token.Type != TokenType.Long) {
                 throw new InvalidCastException();
+            }
             return token.rawToken.Long;
         }
 
         static public explicit operator double(Token token)
         {
-            if (token.Type != TokenType.Double)
+            if (token.Type != TokenType.Double) {
                 throw new InvalidCastException();
+            }
             return token.rawToken.Double;
         }
 
         static public explicit operator string(Token token)
         {
-            if (token.Type != TokenType.String)
+            if (token.Type != TokenType.String) {
                 throw new InvalidCastException();
+            }
             return new string(token.stringBuffer, token.rawToken.StringOffset, token.rawToken.StringLength);
         }
 
         static public explicit operator StringSlice(Token token)
         {
-            if (token.Type != TokenType.String)
+            if (token.Type != TokenType.String) {
                 throw new InvalidCastException();
+            }
             return new StringSlice {
                 Buffer = token.stringBuffer,
                 StartIndex = token.rawToken.StringOffset,
@@ -145,7 +150,7 @@ namespace Test.Json
             F, Fa, Fal, Fals
         }
 
-        private State state = State.Start;
+        private State state;
         private int stateStackCount;
         private State[] stateStack = new State[8];
 
@@ -217,8 +222,9 @@ namespace Test.Json
         public IEnumerator<Token> GetEnumerator()
         {
             // ReSharper disable once LoopCanBeConvertedToQuery
-            foreach (var rawToken in tokens)
+            foreach (var rawToken in tokens) {
                 yield return new Token(rawToken, stringBuffer);
+            }
         }
 
         IEnumerator IEnumerable.GetEnumerator()
@@ -262,6 +268,7 @@ namespace Test.Json
             Feed(buffer, startIndex, length);
             return IsDone;
         }
+
         public bool Tokenize(string str)
         {
             Feed(str);
@@ -271,14 +278,17 @@ namespace Test.Json
 
         public void Feed(char[] buffer, int startIndex, int length)
         {
-            for (int i = startIndex; i < startIndex + length; ++i)
+            for (int i = startIndex; i < startIndex + length; ++i) {
                 Feed(buffer[i]);
+            }
         }
+
         public void Feed(string str)
         {
             // ReSharper disable once ForCanBeConvertedToForeach
-            for (int i = 0; i < str.Length; ++i)
+            for (int i = 0; i < str.Length; ++i) {
                 Feed(str[i]);
+            }
         }
 
 
@@ -865,8 +875,9 @@ namespace Test.Json
 
         private void EmitStringChar(char ch)
         {
-            if (stringPos >= stringBuffer.Length)
+            if (stringPos >= stringBuffer.Length) {
                 Array.Resize(ref stringBuffer, stringBuffer.Length * 2);
+            }
             stringBuffer[stringPos++] = ch;
         }
 
@@ -887,8 +898,9 @@ namespace Test.Json
                 EmitToken(new RawToken { Type = TokenType.Long, Long = wholePart });
             } else {
                 double num = wholePart + (double)numFrac / numFracDivisor;
-                if (numExp != 0)
+                if (numExp != 0) {
                     num *= Math.Pow(10, numExpSign * numExp);
+                }
                 EmitToken(new RawToken { Type = TokenType.Double, Double = num });
             }
         }
@@ -910,12 +922,15 @@ namespace Test.Json
 
         private static int HexVal(char ch)
         {
-            if (ch >= '0' && ch <= '9')
+            if (ch >= '0' && ch <= '9') {
                 return ch - '0';
-            if (ch >= 'a' && ch <= 'f')
+            }
+            if (ch >= 'a' && ch <= 'f') {
                 return ch - 'a' + 10;
-            if (ch >= 'A' && ch <= 'F')
+            }
+            if (ch >= 'A' && ch <= 'F') {
                 return ch - 'A' + 10;
+            }
             return -1;
         }
     }

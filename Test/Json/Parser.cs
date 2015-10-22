@@ -2,9 +2,7 @@
 using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Globalization;
 using System.Runtime.InteropServices;
-using System.Text;
 
 namespace Test.Json
 {
@@ -71,36 +69,41 @@ namespace Test.Json
 
         static public explicit operator bool(Value value)
         {
-            if (value.Type != ValueType.Bool)
+            if (value.Type != ValueType.Bool) {
                 throw new InvalidCastException();
+            }
             return value.rawValue.Bool;
         }
 
         static public explicit operator long(Value value)
         {
-            if (value.Type != ValueType.Long)
+            if (value.Type != ValueType.Long) {
                 throw new InvalidCastException();
+            }
             return value.rawValue.Long;
         }
 
         static public explicit operator double(Value value)
         {
-            if (value.Type != ValueType.Double)
+            if (value.Type != ValueType.Double) {
                 throw new InvalidCastException();
+            }
             return value.rawValue.Double;
         }
 
         static public explicit operator string(Value value)
         {
-            if (value.Type != ValueType.String)
+            if (value.Type != ValueType.String) {
                 throw new InvalidCastException();
+            }
             return (string)value.parser._GetString(value.rawValue.StringIndex);
         }
 
         static public explicit operator StringSlice(Value value)
         {
-            if (value.Type != ValueType.String)
+            if (value.Type != ValueType.String) {
                 throw new InvalidCastException();
+            }
             return value.parser._GetString(value.rawValue.StringIndex);
         }
 
@@ -108,10 +111,12 @@ namespace Test.Json
         {
             get
             {
-                if (Type == ValueType.Array)
+                if (Type == ValueType.Array) {
                     return rawValue.ArrayLength;
-                if (Type == ValueType.Object)
+                }
+                if (Type == ValueType.Object) {
                     return rawValue.ObjectLength;
+                }
                 throw new InvalidCastException();
             }
         }
@@ -121,13 +126,15 @@ namespace Test.Json
             get
             {
                 if (Type == ValueType.Array) {
-                    if (i < 0 || i >= rawValue.ArrayLength)
+                    if (i < 0 || i >= rawValue.ArrayLength) {
                         throw new IndexOutOfRangeException();
+                    }
                     return ArrayValue(i);
                 }
                 if (Type == ValueType.Object) {
-                    if (i < 0 || i >= rawValue.ObjectLength)
+                    if (i < 0 || i >= rawValue.ObjectLength) {
                         throw new IndexOutOfRangeException();
+                    }
                     return ObjectValue(i);
                 }
                 throw new InvalidCastException();
@@ -137,11 +144,13 @@ namespace Test.Json
         public IEnumerator<Value> GetEnumerator()
         {
             if (Type == ValueType.Array) {
-                for (int i = 0; i < rawValue.ArrayLength; ++i)
+                for (int i = 0; i < rawValue.ArrayLength; ++i) {
                     yield return ArrayValue(i);
+                }
             } else if (Type == ValueType.Object) {
-                for (int i = 0; i < rawValue.ObjectLength; ++i)
+                for (int i = 0; i < rawValue.ObjectLength; ++i) {
                     yield return ObjectValue(i);
+                }
             } else {
                 throw new InvalidCastException();
             }
@@ -156,10 +165,12 @@ namespace Test.Json
         {
             get
             {
-                if (Type != ValueType.Object)
+                if (Type != ValueType.Object) {
                     throw new InvalidCastException();
-                for (int i = 0; i < rawValue.ObjectLength; ++i)
+                }
+                for (int i = 0; i < rawValue.ObjectLength; ++i) {
                     yield return ObjectKey(i);
+                }
             }
         }
 
@@ -167,8 +178,9 @@ namespace Test.Json
         {
             get
             {
-                if (Type != ValueType.Object)
+                if (Type != ValueType.Object) {
                     throw new InvalidCastException();
+                }
                 for (int i = 0; i < rawValue.ObjectLength; ++i) {
                     yield return new KeyValuePair {
                         Key = ObjectKey(i),
@@ -260,8 +272,9 @@ namespace Test.Json
         {
             get
             {
-                if (context.State != State.Done)
+                if (context.State != State.Done) {
                     throw new InvalidOperationException();
+                }
                 Debug.Assert(contextStackCount == 0);
                 Debug.Assert(valueCount > 0);
                 return new Value(values[valueCount - 1], this);
@@ -298,8 +311,9 @@ namespace Test.Json
 
         public bool Parse(IEnumerable<Token> tokens)
         {
-            foreach (var token in tokens)
+            foreach (var token in tokens) {
                 Feed(token);
+            }
             return IsDone;
         }
 
