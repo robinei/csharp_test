@@ -29,30 +29,35 @@ namespace Test.Json
         }
 
         private readonly bool pretty;
-        private readonly int indent;
-        private readonly string colon;
-        private readonly string comma;
+        private readonly string indentString;
+        private readonly string colonString;
+
+        private readonly StringBuilder builder = new StringBuilder();
 
         private Context context;
         private int contextStackCount;
         private Context[] contextStack = new Context[8];
-        private readonly StringBuilder builder = new StringBuilder();
 
-        public Generator(bool pretty = false, int indent = 4)
+        public Generator(bool pretty = false, string indentString = "    ")
         {
             this.pretty = pretty;
-            this.indent = indent;
-            colon = pretty ? ": " : ":";
-            comma = pretty ? ", " : ",";
+            this.indentString = indentString;
+            colonString = pretty ? ": " : ":";
         }
 
         public void Reset()
         {
+            builder.Clear();
             context.State = State.Start;
             context.NeedComma = false;
             contextStackCount = 0;
-            builder.Clear();
         }
+
+        public override string ToString()
+        {
+            return builder.ToString();
+        }
+
 
         private void UpdateState(TokenType tokenType)
         {
@@ -67,15 +72,19 @@ namespace Test.Json
             case State.ArrayValue:
                 if (tokenType == TokenType.ArrayEnd) {
                     PopContext();
+                    MaybeIndent();
                 } else {
+                    MaybeCommaIndent();
                     DispatchValueType(tokenType);
                 }
                 break;
             case State.ObjectKey:
                 if (tokenType == TokenType.ObjectEnd) {
                     PopContext();
+                    MaybeIndent();
                 } else if (tokenType == TokenType.String) {
                     context.State = State.ObjectValue;
+                    MaybeCommaIndent();
                 } else {
                     context.State = State.Error;
                     throw new GeneratorException();
@@ -83,8 +92,8 @@ namespace Test.Json
                 break;
             case State.ObjectValue:
                 context.State = State.ObjectKey;
+                builder.Append(colonString);
                 DispatchValueType(tokenType);
-                builder.Append(colon);
                 break;
             }
         }
@@ -97,28 +106,16 @@ namespace Test.Json
             case TokenType.Long:
             case TokenType.Double:
             case TokenType.String:
-                MaybeEmitComma();
                 break;
             case TokenType.ArrayBegin:
-                MaybeEmitComma();
                 PushContext(State.ArrayValue);
                 break;
             case TokenType.ObjectBegin:
-                MaybeEmitComma();
                 PushContext(State.ObjectKey);
                 break;
             default:
                 context.State = State.Error;
                 throw new GeneratorException();
-            }
-        }
-
-        private void MaybeEmitComma()
-        {
-            if (context.NeedComma) {
-                builder.Append(",");
-            } else {
-                context.NeedComma = true;
             }
         }
 
@@ -134,13 +131,54 @@ namespace Test.Json
 
         private void PopContext()
         {
-            context = contextStack[contextStack.Length - 1];
-            --contextStackCount;
+            context = contextStack[--contextStackCount];
+        }
+
+        private void MaybeIndent()
+        {
+            if (pretty) {
+                builder.Append("\n");
+                for (int i = 0; i < contextStackCount; ++i) {
+                    builder.Append(indentString);
+                }
+            }
+        }
+
+        private void MaybeCommaIndent()
+        {
+            if (context.NeedComma) {
+                builder.Append(",");
+            } else {
+                context.NeedComma = true;
+            }
+            MaybeIndent();
         }
 
 
 
+        public void ArrayBegin()
+        {
+            UpdateState(TokenType.ArrayBegin);
+            builder.Append("[");
+        }
 
+        public void ArrayEnd()
+        {
+            UpdateState(TokenType.ArrayEnd);
+            builder.Append("]");
+        }
+
+        public void ObjectBegin()
+        {
+            UpdateState(TokenType.ObjectBegin);
+            builder.Append("{");
+        }
+
+        public void ObjectEnd()
+        {
+            UpdateState(TokenType.ObjectEnd);
+            builder.Append("}");
+        }
 
         public void Null()
         {
@@ -180,39 +218,52 @@ namespace Test.Json
 
         public void Value(string value)
         {
+            if (value == null) {
+                Null();
+                return;
+            }
+
             UpdateState(TokenType.String);
+
             builder.Append("\"");
-            /*for (int i = 0; i < value.Length; ++i) {
-                switch (value[i]) {
+
+            // ReSharper disable once ForCanBeConvertedToForeach
+            for (int i = 0; i < value.Length; ++i) {
+                char ch = value[i];
+                switch (ch) {
+                case '"':
+                    builder.Append("\\\"");
+                    break;
+                case '\\':
+                    builder.Append("\\\\");
+                    break;
+                case '\b':
+                    builder.Append("\\b");
+                    break;
+                case '\f':
+                    builder.Append("\\f");
+                    break;
                 case '\n':
                     builder.Append("\\n");
+                    break;
+                case '\r':
+                    builder.Append("\\r");
+                    break;
+                case '\t':
+                    builder.Append("\\t");
+                    break;
+                default:
+                    builder.Append(ch);
+                    break;
                 }
-            }*/
+            }
+
             builder.Append("\"");
         }
 
-        public void ArrayBegin()
+        public void Value(StringSlice value)
         {
-            UpdateState(TokenType.ArrayBegin);
-            builder.Append("[");
-        }
-
-        public void ArrayEnd()
-        {
-            UpdateState(TokenType.ArrayEnd);
-            builder.Append("]");
-        }
-
-        public void ObjectBegin()
-        {
-            UpdateState(TokenType.ObjectBegin);
-            builder.Append("{");
-        }
-
-        public void ObjectEnd()
-        {
-            UpdateState(TokenType.ObjectEnd);
-            builder.Append("}");
+            Value((string)value);
         }
 
         public void Value(object value)
@@ -237,29 +288,12 @@ namespace Test.Json
             }
         }
 
-        public void Value(object[] value)
-        {
-            ArrayBegin();
-            for (int i = 0; i < value.Length; ++i) {
-                Value(i);
-            }
-            ArrayEnd();
-        }
-
         public void Value<T>(T[] value)
         {
             ArrayBegin();
+            // ReSharper disable once ForCanBeConvertedToForeach
             for (int i = 0; i < value.Length; ++i) {
-                Value(i);
-            }
-            ArrayEnd();
-        }
-
-        public void Value(IReadOnlyList<object> value)
-        {
-            ArrayBegin();
-            for (int i = 0; i < value.Count; ++i) {
-                Value(i);
+                Value(value[i]);
             }
             ArrayEnd();
         }
@@ -267,20 +301,20 @@ namespace Test.Json
         public void Value<T>(IReadOnlyList<T> value)
         {
             ArrayBegin();
+            // ReSharper disable once ForCanBeConvertedToForeach
             for (int i = 0; i < value.Count; ++i) {
-                Value(i);
+                Value(value[i]);
             }
             ArrayEnd();
         }
 
-        public void Value(IReadOnlyDictionary<string, object> value)
+        public void Value<T>(IEnumerable<T> value)
         {
-            ObjectBegin();
+            ArrayBegin();
             foreach (var item in value) {
-                Value(item.Key);
-                Value(item.Value);
+                Value(item);
             }
-            ObjectEnd();
+            ArrayEnd();
         }
 
         public void Value<T>(IReadOnlyDictionary<string, T> value)
@@ -291,6 +325,75 @@ namespace Test.Json
                 Value(item.Value);
             }
             ObjectEnd();
+        }
+
+        public void Value(Token token)
+        {
+            switch (token.Type) {
+            case TokenType.Null:
+                Null();
+                break;
+            case TokenType.Bool:
+                Value((bool)token);
+                break;
+            case TokenType.Long:
+                Value((long)token);
+                break;
+            case TokenType.Double:
+                Value((double)token);
+                break;
+            case TokenType.String:
+                Value((string)token);
+                break;
+            case TokenType.ArrayBegin:
+                ArrayBegin();
+                break;
+            case TokenType.ArrayEnd:
+                ArrayEnd();
+                break;
+            case TokenType.ObjectBegin:
+                ObjectBegin();
+                break;
+            case TokenType.ObjectEnd:
+                ObjectEnd();
+                break;
+            }
+        }
+
+        public void Value(Value value)
+        {
+            switch (value.Type) {
+            case ValueType.Null:
+                Null();
+                break;
+            case ValueType.Bool:
+                Value((bool)value);
+                break;
+            case ValueType.Long:
+                Value((long)value);
+                break;
+            case ValueType.Double:
+                Value((double)value);
+                break;
+            case ValueType.String:
+                Value((string)value);
+                break;
+            case ValueType.Array:
+                ArrayBegin();
+                foreach (var item in value) {
+                    Value(item);
+                }
+                ArrayEnd();
+                break;
+            case ValueType.Object:
+                ObjectBegin();
+                foreach (var item in value.Items) {
+                    Value(item.Key);
+                    Value(item.Value);
+                }
+                ObjectEnd();
+                break;
+            }
         }
     }
 }

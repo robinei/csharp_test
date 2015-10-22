@@ -152,7 +152,7 @@ namespace Test.Json
             return GetEnumerator();
         }
 
-        public IEnumerator<StringSlice> Keys
+        public IEnumerable<StringSlice> Keys
         {
             get
             {
@@ -163,7 +163,7 @@ namespace Test.Json
             }
         }
 
-        public IEnumerator<KeyValuePair> Items
+        public IEnumerable<KeyValuePair> Items
         {
             get
             {
@@ -196,69 +196,9 @@ namespace Test.Json
 
         public override string ToString()
         {
-            var str = new StringBuilder();
-            Dump(str, 0);
-            return str.ToString();
-        }
-
-        private void Dump(StringBuilder str, int depth)
-        {
-            int count;
-            switch (Type) {
-            case ValueType.Null:
-                str.Append("null");
-                break;
-            case ValueType.Bool:
-                str.Append(rawValue.Bool ? "true" : "false");
-                break;
-            case ValueType.Long:
-                str.Append(rawValue.Long.ToString(CultureInfo.InvariantCulture));
-                break;
-            case ValueType.Double:
-                str.Append(rawValue.Double.ToString(CultureInfo.InvariantCulture));
-                break;
-            case ValueType.String:
-                str.Append("\"");
-                str.Append((string)this); // FIXME: escape string
-                str.Append("\"");
-                break;
-            case ValueType.Array:
-                count = Count;
-                str.Append("[\n");
-                for (int i = 0; i < count; ++i) {
-                    Indent(str, depth + 1);
-                    ArrayValue(i).Dump(str, depth + 1);
-                    if (i != count - 1)
-                        str.Append(",");
-                    str.Append("\n");
-                }
-                Indent(str, depth);
-                str.Append("]");
-                break;
-            case ValueType.Object:
-                count = Count;
-                str.Append("{\n");
-                for (int i = 0; i < count; ++i) {
-                    Indent(str, depth + 1);
-                    str.Append("\"");
-                    str.Append((string)ObjectKey(i));
-                    str.Append("\"");
-                    str.Append(": ");
-                    ObjectValue(i).Dump(str, depth + 1);
-                    if (i != count - 1)
-                        str.Append(",");
-                    str.Append("\n");
-                }
-                Indent(str, depth);
-                str.Append("}");
-                break;
-            }
-        }
-
-        private static void Indent(StringBuilder str, int depth)
-        {
-            for (int i = 0; i < depth; ++i)
-                str.Append("    ");
+            var gen = new Generator(true);
+            gen.Value(this);
+            return gen.ToString();
         }
     }
 
