@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
 using System.Text;
@@ -10,7 +11,14 @@ namespace Test.Json
         public GeneratorException(string msg) : base(msg) { }
     }
 
-    public class Generator
+
+    public interface IToJson
+    {
+        void ToJson(JsonGen gen);
+    }
+
+
+    public class JsonGen
     {
         private enum State
         {
@@ -38,14 +46,14 @@ namespace Test.Json
         private int contextStackCount;
         private Context[] contextStack = new Context[8];
 
-        public Generator(bool pretty = false, string indentString = "    ")
+        public JsonGen(bool pretty = false, string indentString = "    ")
         {
             this.pretty = pretty;
             this.indentString = indentString;
             colonString = pretty ? ": " : ":";
         }
 
-        public void Reset()
+        public void Clear()
         {
             builder.Clear();
             context.State = State.Start;
@@ -192,12 +200,6 @@ namespace Test.Json
             builder.Append(value ? "true" : "false");
         }
 
-        public void Value(int value)
-        {
-            UpdateState(TokenType.Long);
-            builder.Append(value.ToString(CultureInfo.InvariantCulture));
-        }
-
         public void Value(long value)
         {
             UpdateState(TokenType.Long);
@@ -222,43 +224,8 @@ namespace Test.Json
                 Null();
                 return;
             }
-
             UpdateState(TokenType.String);
-
-            builder.Append("\"");
-
-            // ReSharper disable once ForCanBeConvertedToForeach
-            for (int i = 0; i < value.Length; ++i) {
-                char ch = value[i];
-                switch (ch) {
-                case '"':
-                    builder.Append("\\\"");
-                    break;
-                case '\\':
-                    builder.Append("\\\\");
-                    break;
-                case '\b':
-                    builder.Append("\\b");
-                    break;
-                case '\f':
-                    builder.Append("\\f");
-                    break;
-                case '\n':
-                    builder.Append("\\n");
-                    break;
-                case '\r':
-                    builder.Append("\\r");
-                    break;
-                case '\t':
-                    builder.Append("\\t");
-                    break;
-                default:
-                    builder.Append(ch);
-                    break;
-                }
-            }
-
-            builder.Append("\"");
+            FormatString(value, builder);
         }
 
         public void Value(StringSlice value)
@@ -272,20 +239,88 @@ namespace Test.Json
                 Null();
                 return;
             }
-            var str = value as string;
-            if (str != null) {
-                Value(str);
-            } else if (value is bool) {
+
+            switch (Type.GetTypeCode(value.GetType())) {
+            case TypeCode.Boolean:
                 Value((bool)value);
-            } else if (value is int) {
-                Value((int)value);
-            } else if (value is long) {
-                Value((long)value);
-            } else if (value is float) {
+                return;
+            case TypeCode.SByte:
+            case TypeCode.Byte:
+            case TypeCode.Int16:
+            case TypeCode.UInt16:
+            case TypeCode.Int32:
+            case TypeCode.UInt32:
+            case TypeCode.Int64:
+            case TypeCode.UInt64:
+                Value(Convert.ToInt64(value));
+                return;
+            case TypeCode.Single:
                 Value((float)value);
-            } else if (value is double) {
+                return;
+            case TypeCode.Double:
                 Value((double)value);
+                return;
+            case TypeCode.String:
+                Value((string)value);
+                return;
             }
+
+            if (value is StringSlice) {
+                Value((StringSlice)value);
+                return;
+            }
+
+            var enumerable = value as IEnumerable;
+            if (enumerable != null) {
+                var isDict = IsDictType(value.GetType());
+                if (!isDict) {
+                    Value(enumerable);
+                    return;
+                }
+                if (TryObject<object>(value))
+                    return;
+                if (TryObject<string>(value))
+                    return;
+                if (TryObject<bool>(value))
+                    return;
+                if (TryObject<sbyte>(value))
+                    return;
+                if (TryObject<byte>(value))
+                    return;
+                if (TryObject<short>(value))
+                    return;
+                if (TryObject<ushort>(value))
+                    return;
+                if (TryObject<int>(value))
+                    return;
+                if (TryObject<uint>(value))
+                    return;
+                if (TryObject<long>(value))
+                    return;
+                if (TryObject<ulong>(value))
+                    return;
+                if (TryObject<float>(value))
+                    return;
+                if (TryObject<double>(value))
+                    return;
+            }
+
+            var toJson = value as IToJson;
+            if (toJson != null) {
+                toJson.ToJson(this);
+                return;
+            }
+
+            throw new GeneratorException("unexpected value type: " + value.GetType());
+        }
+
+        private bool TryObject<TValue>(object value)
+        {
+            if (!(value is IEnumerable<KeyValuePair<string, TValue>>)) {
+                return false;
+            }
+            Value((IEnumerable<KeyValuePair<string, TValue>>)value);
+            return true;
         }
 
         public void Value<T>(T[] value)
@@ -298,12 +333,11 @@ namespace Test.Json
             ArrayEnd();
         }
 
-        public void Value<T>(IReadOnlyList<T> value)
+        public void Value(IEnumerable value)
         {
             ArrayBegin();
-            // ReSharper disable once ForCanBeConvertedToForeach
-            for (int i = 0; i < value.Count; ++i) {
-                Value(value[i]);
+            foreach (var item in value) {
+                Value(item);
             }
             ArrayEnd();
         }
@@ -317,7 +351,7 @@ namespace Test.Json
             ArrayEnd();
         }
 
-        public void Value<T>(IReadOnlyDictionary<string, T> value)
+        public void Value<T>(IEnumerable<KeyValuePair<string, T>> value)
         {
             ObjectBegin();
             foreach (var item in value) {
@@ -327,7 +361,7 @@ namespace Test.Json
             ObjectEnd();
         }
 
-        public void Value(Token token)
+        public void Value(JsonToken token)
         {
             switch (token.Type) {
             case TokenType.Null:
@@ -360,7 +394,7 @@ namespace Test.Json
             }
         }
 
-        public void Value(Value value)
+        public void Value(JsonValue value)
         {
             switch (value.Type) {
             case ValueType.Null:
@@ -387,13 +421,63 @@ namespace Test.Json
                 break;
             case ValueType.Object:
                 ObjectBegin();
-                foreach (var item in value.Items) {
+                foreach (var item in value.KeyValuePairs) {
                     Value(item.Key);
                     Value(item.Value);
                 }
                 ObjectEnd();
                 break;
             }
+        }
+
+
+        private static bool IsDictType(Type type)
+        {
+            // ReSharper disable once LoopCanBeConvertedToQuery
+            foreach (var interfaceType in type.GetInterfaces()) {
+                if (interfaceType.IsGenericType && interfaceType.GetGenericTypeDefinition() == typeof(IReadOnlyDictionary<,>)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        public static void FormatString(string input, StringBuilder output)
+        {
+            output.Append("\"");
+
+            // ReSharper disable once ForCanBeConvertedToForeach
+            for (int i = 0; i < input.Length; ++i) {
+                char ch = input[i];
+                switch (ch) {
+                case '"':
+                    output.Append("\\\"");
+                    break;
+                case '\\':
+                    output.Append("\\\\");
+                    break;
+                case '\b':
+                    output.Append("\\b");
+                    break;
+                case '\f':
+                    output.Append("\\f");
+                    break;
+                case '\n':
+                    output.Append("\\n");
+                    break;
+                case '\r':
+                    output.Append("\\r");
+                    break;
+                case '\t':
+                    output.Append("\\t");
+                    break;
+                default:
+                    output.Append(ch);
+                    break;
+                }
+            }
+
+            output.Append("\"");
         }
     }
 }

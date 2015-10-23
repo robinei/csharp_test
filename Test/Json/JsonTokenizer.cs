@@ -20,6 +20,11 @@ namespace Test.Json
         ObjectEnd
     }
 
+
+    /// <summary>
+    /// Discriminated union which allows us to efficiently store tokens contigously,
+    /// and to minimize allocations.
+    /// </summary>
     [StructLayout(LayoutKind.Explicit)]
     public struct RawToken
     {
@@ -42,12 +47,16 @@ namespace Test.Json
     }
 
 
-    public struct Token
+    /// <summary>
+    /// Wraps the RawToken and provides convenience conversion operators.
+    /// If this is a String token, it also contains the stringBuffer into which the string chars are stored.
+    /// </summary>
+    public struct JsonToken
     {
         private readonly RawToken rawToken;
         private readonly char[] stringBuffer;
 
-        public Token(RawToken raw, char[] buf)
+        public JsonToken(RawToken raw, char[] buf)
         {
             rawToken = raw;
             stringBuffer = raw.Type == TokenType.String ? buf : null;
@@ -55,7 +64,7 @@ namespace Test.Json
 
         public TokenType Type { get { return rawToken.Type; } }
 
-        static public explicit operator bool(Token token)
+        static public explicit operator bool(JsonToken token)
         {
             if (token.Type != TokenType.Bool) {
                 throw new InvalidCastException();
@@ -63,7 +72,7 @@ namespace Test.Json
             return token.rawToken.Bool;
         }
 
-        static public explicit operator long(Token token)
+        static public explicit operator long(JsonToken token)
         {
             if (token.Type != TokenType.Long) {
                 throw new InvalidCastException();
@@ -71,7 +80,7 @@ namespace Test.Json
             return token.rawToken.Long;
         }
 
-        static public explicit operator double(Token token)
+        static public explicit operator double(JsonToken token)
         {
             if (token.Type != TokenType.Double) {
                 throw new InvalidCastException();
@@ -79,7 +88,7 @@ namespace Test.Json
             return token.rawToken.Double;
         }
 
-        static public explicit operator string(Token token)
+        static public explicit operator string(JsonToken token)
         {
             if (token.Type != TokenType.String) {
                 throw new InvalidCastException();
@@ -87,7 +96,7 @@ namespace Test.Json
             return new string(token.stringBuffer, token.rawToken.StringOffset, token.rawToken.StringLength);
         }
 
-        static public explicit operator StringSlice(Token token)
+        static public explicit operator StringSlice(JsonToken token)
         {
             if (token.Type != TokenType.String) {
                 throw new InvalidCastException();
@@ -109,7 +118,9 @@ namespace Test.Json
             case TokenType.Double:
                 return String.Format("{0}({1})", Type, (double)this);
             case TokenType.String:
-                return String.Format("{0}(\"{1}\")", Type, (string)this);
+                var builder = new StringBuilder();
+                JsonGen.FormatString((string)this, builder);
+                return String.Format("{0}({1})", Type, builder);
             default:
                 return Type.ToString();
             }
@@ -117,7 +128,15 @@ namespace Test.Json
     }
 
 
-    public class Tokenizer : IEnumerable<Token>
+    /// <summary>
+    /// A push based tokenizer into which you can Feed strings, char array segments or even individual chars.
+    /// As complete tokens are tokenized they are pushed into the "tokens" array, for later consumption.
+    /// 
+    /// It is actually a little bit misleading to call this a tokenizer, since it is actually a full parser,
+    /// that emits a token stream instead of a tree structure.
+    /// That means that the produced token stream is guaranteed to be a valid JSON token stream.
+    /// </summary>
+    public class JsonTokenizer : IEnumerable<JsonToken>
     {
         private enum State
         {
@@ -211,19 +230,19 @@ namespace Test.Json
 
         public int Count { get { return tokenCount; } }
 
-        public Token this[int i]
+        public JsonToken this[int i]
         {
             get
             {
-                return new Token(tokens[i], stringBuffer);
+                return new JsonToken(tokens[i], stringBuffer);
             }
         }
 
-        public IEnumerator<Token> GetEnumerator()
+        public IEnumerator<JsonToken> GetEnumerator()
         {
             // ReSharper disable once LoopCanBeConvertedToQuery
-            foreach (var rawToken in tokens) {
-                yield return new Token(rawToken, stringBuffer);
+            for (var i = 0; i < tokenCount; ++i) {
+                yield return new JsonToken(tokens[i], stringBuffer);
             }
         }
 
@@ -232,9 +251,15 @@ namespace Test.Json
             return GetEnumerator();
         }
 
-        // wipe the tokens that have been emitted since last Reset.
-        // the string buffer will be overwritten after this, so any existing StringSlice
-        // values from previously parsed tokens will no longer be safe to hang on to
+
+        /// <summary>
+        /// Wipe the tokens that have been emitted since last Reset.
+        /// The string buffer will be overwritten after this, so any existing StringSlice
+        /// values from previously parsed tokens will no longer be safe to hang on to.
+        /// 
+        /// Parse state is preserved, so this is useful if you are done with the current
+        /// tokens and are ready to tokenize more, reusing the existing buffers for tokens and strings.
+        /// </summary>
         public void Reset()
         {
             if (stringPos == stringStart) {
@@ -251,6 +276,9 @@ namespace Test.Json
             tokenCount = 0;
         }
 
+        /// <summary>
+        /// Wipe everything, and be as new.
+        /// </summary>
         public void Clear()
         {
             state = State.Start;
@@ -263,22 +291,9 @@ namespace Test.Json
         }
 
 
-        public bool Tokenize(char[] buffer, int startIndex, int length)
-        {
-            Feed(buffer, startIndex, length);
-            return IsDone;
-        }
-
-        public bool Tokenize(string str)
-        {
-            Feed(str);
-            return IsDone;
-        }
-
-
         public void Feed(char[] buffer, int startIndex, int length)
         {
-            for (int i = startIndex; i < startIndex + length; ++i) {
+            for (int i = startIndex; IsTokenizing && i < startIndex + length; ++i) {
                 Feed(buffer[i]);
             }
         }
@@ -286,7 +301,7 @@ namespace Test.Json
         public void Feed(string str)
         {
             // ReSharper disable once ForCanBeConvertedToForeach
-            for (int i = 0; i < str.Length; ++i) {
+            for (int i = 0; IsTokenizing && i < str.Length; ++i) {
                 Feed(str[i]);
             }
         }

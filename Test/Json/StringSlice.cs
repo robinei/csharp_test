@@ -39,12 +39,15 @@ namespace Test.Json
         public static bool operator !=(StringSlice a, StringSlice b) { return !(a == b); }
         public static bool operator ==(StringSlice a, StringSlice b)
         {
-            if (a.Length != b.Length)
+            if (a.Length != b.Length) {
                 return false;
+            }
             // ReSharper disable once LoopCanBeConvertedToQuery
-            for (int i = 0; i < a.Length; ++i)
-                if (a.Buffer[a.StartIndex + i] != b.Buffer[b.StartIndex + i])
+            for (int i = 0; i < a.Length; ++i) {
+                if (a.Buffer[a.StartIndex + i] != b.Buffer[b.StartIndex + i]) {
                     return false;
+                }
+            }
             return true;
         }
 

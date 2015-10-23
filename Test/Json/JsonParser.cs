@@ -24,6 +24,10 @@ namespace Test.Json
     }
 
 
+    /// <summary>
+    /// Discriminated union which allows us to efficiently store values contigously,
+    /// and to minimize allocations.
+    /// </summary>
     [StructLayout(LayoutKind.Explicit)]
     public struct RawValue
     {
@@ -54,19 +58,12 @@ namespace Test.Json
     }
 
 
-    public struct KeyValuePair
-    {
-        public StringSlice Key;
-        public Value Value;
-    }
-
-
-    public struct Value : IEnumerable<Value>
+    public struct JsonValue : IEnumerable<JsonValue>
     {
         private readonly RawValue rawValue;
-        private readonly Parser parser;
+        private readonly JsonParser parser;
 
-        public Value(RawValue v, Parser p)
+        public JsonValue(RawValue v, JsonParser p)
         {
             rawValue = v;
             parser = p;
@@ -74,7 +71,7 @@ namespace Test.Json
 
         public ValueType Type { get { return rawValue.Type; } }
 
-        static public explicit operator bool(Value value)
+        static public explicit operator bool(JsonValue value)
         {
             if (value.Type != ValueType.Bool) {
                 throw new InvalidCastException();
@@ -82,7 +79,7 @@ namespace Test.Json
             return value.rawValue.Bool;
         }
 
-        static public explicit operator long(Value value)
+        static public explicit operator long(JsonValue value)
         {
             if (value.Type != ValueType.Long) {
                 throw new InvalidCastException();
@@ -90,7 +87,7 @@ namespace Test.Json
             return value.rawValue.Long;
         }
 
-        static public explicit operator double(Value value)
+        static public explicit operator double(JsonValue value)
         {
             if (value.Type != ValueType.Double) {
                 throw new InvalidCastException();
@@ -98,7 +95,7 @@ namespace Test.Json
             return value.rawValue.Double;
         }
 
-        static public explicit operator string(Value value)
+        static public explicit operator string(JsonValue value)
         {
             if (value.Type != ValueType.String) {
                 throw new InvalidCastException();
@@ -106,7 +103,7 @@ namespace Test.Json
             return (string)value.parser._GetString(value.rawValue.StringIndex);
         }
 
-        static public explicit operator StringSlice(Value value)
+        static public explicit operator StringSlice(JsonValue value)
         {
             if (value.Type != ValueType.String) {
                 throw new InvalidCastException();
@@ -128,7 +125,11 @@ namespace Test.Json
             }
         }
 
-        public Value this[int i]
+        /// <summary>
+        /// For Arrays this works as expected.
+        /// For Objects this refers to the JsonValue at the requested index (order is preserved).
+        /// </summary>
+        public JsonValue this[int i]
         {
             get
             {
@@ -148,7 +149,7 @@ namespace Test.Json
             }
         }
 
-        public IEnumerator<Value> GetEnumerator()
+        public IEnumerator<JsonValue> GetEnumerator()
         {
             if (Type == ValueType.Array) {
                 for (int i = 0; i < rawValue.ArrayLength; ++i) {
@@ -181,7 +182,7 @@ namespace Test.Json
             }
         }
 
-        public IEnumerable<KeyValuePair> Items
+        public IEnumerable<KeyValuePair<StringSlice, JsonValue>> KeyValuePairs
         {
             get
             {
@@ -189,10 +190,7 @@ namespace Test.Json
                     throw new InvalidCastException();
                 }
                 for (int i = 0; i < rawValue.ObjectLength; ++i) {
-                    yield return new KeyValuePair {
-                        Key = ObjectKey(i),
-                        Value = ObjectValue(i)
-                    };
+                    yield return new KeyValuePair<StringSlice, JsonValue>(ObjectKey(i), ObjectValue(i));
                 }
             }
         }
@@ -202,27 +200,65 @@ namespace Test.Json
             return parser._GetString(parser._GetIndex(rawValue.ObjectOffset + i * 2));
         }
 
-        private Value ObjectValue(int i)
+        private JsonValue ObjectValue(int i)
         {
-            return new Value(parser._GetValue(parser._GetIndex(rawValue.ObjectOffset + i * 2 + 1)), parser);
+            return new JsonValue(parser._GetValue(parser._GetIndex(rawValue.ObjectOffset + i * 2 + 1)), parser);
         }
 
-        private Value ArrayValue(int i)
+        private JsonValue ArrayValue(int i)
         {
-            return new Value(parser._GetValue(parser._GetIndex(rawValue.ArrayOffset + i)), parser);
+            return new JsonValue(parser._GetValue(parser._GetIndex(rawValue.ArrayOffset + i)), parser);
         }
 
 
+        /// <summary>
+        /// Generate a pretty printed string representation of this JsonValue.
+        /// </summary>
         public override string ToString()
         {
-            var gen = new Generator(true);
+            var gen = new JsonGen(true);
             gen.Value(this);
             return gen.ToString();
+        }
+
+
+        public static JsonValue Parse(string str)
+        {
+            var tokenizer = new JsonTokenizer();
+            tokenizer.Feed(str);
+            if (tokenizer.IsFailed) {
+                throw new ParserException(tokenizer.ErrorString);
+            }
+
+            var parser = new JsonParser();
+            parser.Feed(tokenizer);
+            if (parser.IsFailed) {
+                throw new ParserException("parse error");
+            }
+
+            return parser.LastParsedRoot;
         }
     }
 
 
-    public class Parser
+    /// <summary>
+    /// Parses a token stream into a tree structure.
+    /// 
+    /// Allocates as little as possible by using flat arrays of structs to store all elements.
+    /// Container values (arrays and objects) refer to child objects through a segment of the
+    /// "indexes" array (contained in the JsonParser), addressed simply by an integer offset and length stored
+    /// in the value structs themselves.
+    /// For Array Values the indexes point into the "values" array, and for Object Values they point into the
+    /// "strings" and "values" arrays (for their keys and values respectively).
+    /// String values also contain an index integer which points into the "strings" array.
+    /// 
+    /// While parsing, the index segments for Objects and Arrays are built up in temporary index arrays
+    /// contained in the parsing Context. When the value is fully parsed, the contents of the temporary
+    /// index array is copied to the end of the global "indexes" array, and a JsonValue is created which refers to
+    /// this new index segment. This way, we avoid per-value allocation even for Array and Object values.
+    /// arrays
+    /// </summary>
+    public class JsonParser
     {
         private enum State
         {
@@ -262,8 +298,8 @@ namespace Test.Json
         private int indexCount;
         private int[] indexes = new int[8];
 
-        private int tempIndexCount;
-        private int[][] tempIndexes = new int[8][];
+        private int tempIndexArrayCount;
+        private int[][] tempIndexArrays = new int[8][];
 
         private Context context;
         private int contextStackCount;
@@ -275,7 +311,7 @@ namespace Test.Json
         internal int _GetIndex(int i) { return indexes[i]; }
 
 
-        public Value LastParsedRoot
+        public JsonValue LastParsedRoot
         {
             get
             {
@@ -284,18 +320,36 @@ namespace Test.Json
                 }
                 Debug.Assert(contextStackCount == 0);
                 Debug.Assert(valueCount > 0);
-                return new Value(values[valueCount - 1], this);
+                return new JsonValue(values[valueCount - 1], this);
             }
         }
         public bool IsDone { get { return context.State == State.Done; } }
         public bool IsFailed { get { return context.State == State.Error; } }
         public bool IsParsing { get { return !IsDone && !IsFailed; } }
 
-        public Parser()
+
+        public JsonParser()
         {
             context = MakeContext(State.Start);
         }
 
+
+        /// <summary>
+        /// This will reset the parse state, but it will *not* damage or interfer with already parsed Values.
+        /// </summary>
+        public void Reset()
+        {
+            ReuseTempIndexArray(context.Indexes);
+            for (int i = 0; i < contextStackCount; ++i) {
+                ReuseTempIndexArray(contextStack[i].Indexes);
+            }
+            context = MakeContext(State.Start);
+            contextStackCount = 0;
+        }
+
+        /// <summary>
+        /// Wipe everything, and be as new.
+        /// </summary>
         public void Clear()
         {
             firstBorrowedString = 0;
@@ -306,38 +360,18 @@ namespace Test.Json
             Reset();
         }
 
-        public void Reset()
-        {
-            ReuseTempIndexList(context.Indexes);
-            for (int i = 0; i < contextStackCount; ++i) {
-                ReuseTempIndexList(contextStack[i].Indexes);
-            }
-            context = MakeContext(State.Start);
-            contextStackCount = 0;
-        }
 
-        public bool Parse(IEnumerable<Token> tokens)
+        public void Feed(IEnumerable<JsonToken> tokens)
         {
             foreach (var token in tokens) {
+                if (!IsParsing) {
+                    break;
+                }
                 Feed(token);
             }
-            return IsDone;
         }
 
-        public static Value Parse(string str)
-        {
-            var tokenizer = new Tokenizer();
-            if (!tokenizer.Tokenize(str)) {
-                throw new ParserException(tokenizer.ErrorString);
-            }
-            var parser = new Parser();
-            if (!parser.Parse(tokenizer)) {
-                throw new ParserException("parse error");
-            }
-            return parser.LastParsedRoot;
-        }
-
-        public void Feed(Token token)
+        public void Feed(JsonToken token)
         {
             switch (context.State) {
             case State.Start:
@@ -385,7 +419,7 @@ namespace Test.Json
             }
         }
 
-        private void DispatchValueToken(Token token)
+        private void DispatchValueToken(JsonToken token)
         {
             switch (token.Type) {
             case TokenType.Null:
@@ -421,8 +455,10 @@ namespace Test.Json
             }
         }
 
-        // copy all the strings that are not owned into a new buffer,
-        // so they can live independent of the old buffer (typically owned by the Tokenizer)
+        /// <summary>
+        /// Copy all the strings that are not owned into a new buffer,
+        /// so they can live independent of the old buffer (typically owned by the JsonTokenizer)
+        /// </summary>
         public void CopyStrings()
         {
             var buffer = new char[borrowedStringsLength];
@@ -478,7 +514,7 @@ namespace Test.Json
 
         private void PopContext()
         {
-            ReuseTempIndexList(context.Indexes);
+            ReuseTempIndexArray(context.Indexes);
             context = contextStack[--contextStackCount];
         }
 
@@ -487,21 +523,21 @@ namespace Test.Json
             return new Context {
                 State = state,
                 IndexCount = 0,
-                Indexes = GetTempIndexList()
+                Indexes = GetTempIndexArray()
             };
         }
 
-        private int[] GetTempIndexList()
+        private int[] GetTempIndexArray()
         {
-            return tempIndexCount > 0 ? tempIndexes[--tempIndexCount] : new int[8];
+            return tempIndexArrayCount > 0 ? tempIndexArrays[--tempIndexArrayCount] : new int[8];
         }
 
-        private void ReuseTempIndexList(int[] list)
+        private void ReuseTempIndexArray(int[] list)
         {
-            if (tempIndexCount == tempIndexes.Length) {
-                Array.Resize(ref tempIndexes, tempIndexes.Length * 2);
+            if (tempIndexArrayCount == tempIndexArrays.Length) {
+                Array.Resize(ref tempIndexArrays, tempIndexArrays.Length * 2);
             }
-            tempIndexes[tempIndexCount++] = list;
+            tempIndexArrays[tempIndexArrayCount++] = list;
         }
     }
 }
