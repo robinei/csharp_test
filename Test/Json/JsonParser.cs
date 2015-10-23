@@ -149,6 +149,25 @@ namespace Test.Json
             }
         }
 
+        /// <summary>
+        /// Does a linear search, so it will be slow on large objects.
+        /// </summary>
+        public JsonValue this[string key]
+        {
+            get
+            {
+                if (Type != ValueType.Object) {
+                    throw new InvalidCastException();
+                }
+                for (int i = 0; i < rawValue.ObjectLength; ++i) {
+                    if (key == ObjectKey(i)) {
+                        return ObjectValue(i);
+                    }
+                }
+                throw new KeyNotFoundException();
+            }
+        }
+
         public IEnumerator<JsonValue> GetEnumerator()
         {
             if (Type == ValueType.Array) {
